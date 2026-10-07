@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import math
 import os
+from concurrent.futures import Future
+from pathlib import Path
 
 import pygame
 
+from animal_images import AnimalImage, AnimalImageService
 from game import MAX_ENERGY, GameSession, GameState
 from skip_list import BuildingNode
 
@@ -19,6 +22,8 @@ BUILD_W = 64
 SPACING = 120
 X0 = 200
 GROUND_Y = 640
+IMAGES_DIR = Path(__file__).resolve().parent / "assets" / "imagens"
+IMAGE_SIZE = (200, 200)
 
 LEVEL_COLORS = [
     (255, 214, 102),
@@ -53,6 +58,55 @@ def shade(c: tuple[int, int, int], f: float) -> tuple[int, int, int]:
     return tuple(max(0, min(255, int(v * f))) for v in c)
 
 
+def load_animal_image(
+    animal_id: int,
+    animal_class: str,
+    animal_name: str,
+    size: tuple[int, int] = IMAGE_SIZE,
+) -> pygame.Surface:
+    """Carrega imagem do animal com Fallback Triplo (ZERO CRASHES garantido).
+
+    Ordem de tentativa:
+      1º  assets/imagens/{animal_id}.jpg  (foto específica)
+      2º  assets/imagens/default_{class}.jpg  (foto genérica da classe)
+      3º  assets/imagens/default_unknown.png  (interrogação geral)
+      4º  Surface sólido com nome do animal (fallback de segurança máxima)
+    """
+    candidates = [
+        IMAGES_DIR / f"{animal_id}.jpg",
+        IMAGES_DIR / f"default_{animal_class.lower()}.jpg",
+        IMAGES_DIR / "default_unknown.png",
+    ]
+    try:
+        for path in candidates:
+            if path.is_file():
+                img = pygame.image.load(str(path))
+                img = pygame.transform.scale(img, size)
+                return img.convert_alpha()
+    except Exception:
+        pass  # captura FileNotFoundError, pygame.error, etc.
+
+    # Fallback de segurança máxima: retângulo colorido + nome
+    surf = pygame.Surface(size)
+    surf.fill((80, 60, 100))
+    pygame.draw.rect(surf, (180, 170, 200), surf.get_rect(), 3)
+    try:
+        font = pygame.font.SysFont("dejavusans,arial", 14)
+        label = font.render(animal_name[:28], True, (255, 255, 255))
+        surf.blit(
+            label,
+            (size[0] // 2 - label.get_width() // 2, size[1] // 2 - label.get_height() // 2),
+        )
+        sub = font.render(f"({animal_class})", True, (200, 200, 220))
+        surf.blit(
+            sub,
+            (size[0] // 2 - sub.get_width() // 2, size[1] // 2 + label.get_height()),
+        )
+    except Exception:
+        pass  # se até a fonte falhar, retorna o retângulo puro
+    return surf
+
+
 class PygameApp:
     def __init__(self, screen: pygame.Surface, session: GameSession) -> None:
         self.screen = screen
@@ -60,11 +114,21 @@ class PygameApp:
         self.clock = pygame.time.Clock()
         self.f_s = pygame.font.SysFont("dejavusans,arial", 12)
         self.f_m = pygame.font.SysFont("dejavusans,arial", 16)
+        self.f_i = pygame.font.SysFont("dejavusans,arial", 17, italic=True)
         self.f_b = pygame.font.SysFont("dejavusans,arial", 30, bold=True)
         self.digits = [
             self.f_s.render(str(i), True, (20, 20, 30)) for i in range(1, 13)
         ]
         self.label_cache: dict[int, pygame.Surface] = {}
+        self.image_cache: dict[int, pygame.Surface] = {}
+        self._target_image: pygame.Surface | None = None
+        self._last_target_id: int | None = None
+        self.image_service = AnimalImageService()
+        self._image_surfaces: dict[str, pygame.Surface] = {}
+        self._image_request_key: tuple[int, str | None] | None = None
+        self._image_future: Future[AnimalImage] | None = None
+        self._image_result: AnimalImage | None = None
+        self._combat_image: pygame.Surface | None = None
         self.bg = self._load_bg()
         self.show_legend = False
         self.show_debug = False
@@ -76,6 +140,7 @@ class PygameApp:
         if node is not None:
             self.p_x = world_x(node.idx) + BUILD_W / 2
         self.cam_x = self.p_x - SCREEN_W / 2
+        self._prepare_target_image()
 
     def _load_bg(self) -> pygame.Surface | None:
         if os.path.isfile(BG_IMAGE_PATH):
@@ -87,10 +152,75 @@ class PygameApp:
                 pass
         return None
 
+    def _get_target_image(self) -> pygame.Surface | None:
+        """Retorna a imagem do alvo atual com cache (fallback triplo)."""
+        target = self.session.target
+        if target is None:
+            return None
+        if target.id == self._last_target_id and self._target_image is not None:
+            return self._target_image
+        # Cache global por ID
+        if target.id in self.image_cache:
+            self._target_image = self.image_cache[target.id]
+        else:
+            self._target_image = load_animal_image(
+                target.id,
+                target.taxonomic_class,
+                target.common_name,
+            )
+            # Limitar cache para não estourar memória
+            if len(self.image_cache) > 200:
+                self.image_cache.clear()
+            self.image_cache[target.id] = self._target_image
+        self._last_target_id = target.id
+        return self._target_image
+
+    def _prepare_target_image(self) -> None:
+        target = self.session.target
+        if target is None:
+            return
+        taxon_id = getattr(target, "inaturalist_id", None)
+        request_key = (target.id, taxon_id)
+        if request_key == self._image_request_key:
+            return
+        self._image_request_key = request_key
+        self._image_result = None
+        self._combat_image = None
+        self._image_future = self.image_service.request(taxon_id)
+        if taxon_id and taxon_id in self._image_surfaces:
+            self._combat_image = self._image_surfaces[taxon_id]
+
+    def _poll_target_image(self) -> None:
+        self._prepare_target_image()
+        future = self._image_future
+        if future is None or not future.done() or self._image_result is not None:
+            return
+        try:
+            result = future.result()
+        except Exception:
+            result = AnimalImage(None, None)
+        self._image_result = result
+        if not result.available or result.image_path is None:
+            return
+        try:
+            image = pygame.image.load(str(result.image_path)).convert_alpha()
+            width, height = image.get_size()
+            max_width, max_height = 304, 304
+            scale = min(max_width / max(1, width), max_height / max(1, height))
+            scaled_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+            self._combat_image = pygame.transform.smoothscale(image, scaled_size)
+            if result.taxon_id:
+                if len(self._image_surfaces) >= 50:
+                    self._image_surfaces.pop(next(iter(self._image_surfaces)))
+                self._image_surfaces[result.taxon_id] = self._combat_image
+        except (pygame.error, OSError, ValueError):
+            self._combat_image = None
+
     def _feet_y(self, floor: int) -> float:
         return GROUND_Y - floor * FLOOR_H - 4
 
     def update(self, dt: float) -> None:
+        self._poll_target_image()
         node = self.session.current_node
         if node is None:
             return
@@ -320,6 +450,111 @@ class PygameApp:
         s = self.f_m.render(sub + "   [R] reiniciar turno  [N] novo alvo", True, (235, 238, 245))
         self.screen.blit(s, (SCREEN_W / 2 - s.get_width() / 2, 310))
 
+    def draw_wrapped_text(
+        self,
+        value: str,
+        x: int,
+        y: int,
+        max_width: int,
+        font: pygame.font.Font,
+        color: tuple[int, int, int],
+        line_gap: int = 4,
+    ) -> int:
+        lines: list[str] = []
+        line = ""
+        for word in value.split():
+            candidate = f"{line} {word}".strip()
+            if line and font.size(candidate)[0] > max_width:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        if line:
+            lines.append(line)
+        for line in lines:
+            rendered = font.render(line, True, color)
+            self.screen.blit(rendered, (x, y))
+            y += rendered.get_height() + line_gap
+        return y
+
+    def draw_combat_overlay(self) -> None:
+        if self.session.state != GameState.COMBAT:
+            return
+        veil = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        veil.fill((7, 10, 16, 205))
+        self.screen.blit(veil, (0, 0))
+
+        panel = pygame.Rect(188, 48, 904, 624)
+        pygame.draw.rect(self.screen, (28, 34, 43), panel, border_radius=6)
+        pygame.draw.rect(self.screen, (119, 151, 137), panel, 2, border_radius=6)
+        title = self.f_b.render("COMBATE", True, (241, 220, 154))
+        self.screen.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 20))
+
+        image_frame = pygame.Rect(panel.x + 30, panel.y + 88, 340, 356)
+        pygame.draw.rect(self.screen, (18, 23, 31), image_frame, border_radius=4)
+        pygame.draw.rect(self.screen, (74, 91, 89), image_frame, 1, border_radius=4)
+        if self._combat_image is not None:
+            image_rect = self._combat_image.get_rect(center=image_frame.center)
+            self.screen.blit(self._combat_image, image_rect)
+        else:
+            loading = self._image_future is not None and not self._image_future.done()
+            label = "Carregando imagem..." if loading else "Imagem não disponível"
+            placeholder = self.f_m.render(label, True, (189, 199, 190))
+            self.screen.blit(
+                placeholder,
+                (image_frame.centerx - placeholder.get_width() // 2,
+                 image_frame.centery - placeholder.get_height() // 2),
+            )
+
+        target = self.session.target
+        right_x = panel.x + 402
+        right_width = panel.right - right_x - 32
+        y = panel.y + 98
+        if target is not None:
+            self.text("NOME POPULAR", (right_x, y), self.f_s, (161, 180, 165))
+            y += 20
+            y = self.draw_wrapped_text(
+                target.common_name, right_x, y, right_width, self.f_b, (245, 241, 224)
+            ) + 10
+            self.text("NOME CIENTÍFICO", (right_x, y), self.f_s, (161, 180, 165))
+            y += 19
+            y = self.draw_wrapped_text(
+                target.scientific_name or "—", right_x, y, right_width, self.f_i,
+                (201, 211, 199),
+            ) + 12
+            self.text("CLASSE", (right_x, y), self.f_s, (161, 180, 165))
+            y += 19
+            y = self.draw_wrapped_text(
+                target.taxonomic_class, right_x, y, right_width, self.f_m,
+                (224, 232, 219),
+            ) + 10
+
+        result = self._image_result
+        if result is not None and result.available:
+            attribution = result.attribution or "Atribuição não informada"
+            self.text("FOTO", (right_x, y), self.f_s, (161, 180, 165))
+            y += 17
+            y = self.draw_wrapped_text(
+                attribution, right_x, y, right_width, self.f_s, (200, 207, 199), 2
+            ) + 6
+            if result.license_code:
+                y = self.draw_wrapped_text(
+                    f"Licença: {result.license_code}", right_x, y, right_width,
+                    self.f_s, (200, 207, 199), 2,
+                )
+            if result.taxon_url:
+                self.draw_wrapped_text(
+                    result.taxon_url, right_x, min(y + 2, panel.bottom - 66),
+                    right_width, self.f_s, (145, 178, 161), 2,
+                )
+
+        prompt = self.f_m.render(
+            "ENTER / ESPAÇO: resolver combate (50/50)", True, (241, 220, 154)
+        )
+        self.screen.blit(
+            prompt, (panel.centerx - prompt.get_width() // 2, panel.bottom - 48)
+        )
+
     def draw(self) -> None:
         self.draw_background()
         lo = max(0, int((self.cam_x - X0) // SPACING) - 1)
@@ -334,12 +569,18 @@ class PygameApp:
         self.draw_minimap()
         self.draw_hud()
         self.draw_overlay()
+        self.draw_combat_overlay()
         pygame.display.flip()
 
     def handle_key(self, key: int) -> bool:
         if key == pygame.K_ESCAPE:
             return False
-        if key in (pygame.K_UP, pygame.K_w):
+        if self.session.state == GameState.COMBAT and key in (
+            pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE
+        ):
+            self.session.resolve_combat()
+            self._prepare_target_image()
+        elif key in (pygame.K_UP, pygame.K_w):
             self.session.change_floor(+1)
         elif key in (pygame.K_DOWN, pygame.K_s):
             self.session.change_floor(-1)
@@ -349,6 +590,7 @@ class PygameApp:
             self.session.restart_turn()
         elif key == pygame.K_n:
             self.session.new_target()
+            self._prepare_target_image()
         elif key == pygame.K_c:
             self.show_legend = not self.show_legend
         elif key == pygame.K_F1:
@@ -366,4 +608,5 @@ class PygameApp:
                     running = self.handle_key(ev.key) and running
             self.update(dt)
             self.draw()
+        self.image_service.shutdown(wait=False)
         pygame.quit()

@@ -26,6 +26,7 @@ class GameState(str, Enum):
     PLAYING = "playing"
     GAME_OVER = "game_over"
     TARGET_REACHED = "target_reached"
+    COMBAT = "combat"
     COMBAT_WIN = "combat_win"
     COMBAT_LOSE = "combat_lose"
 
@@ -76,6 +77,7 @@ class GameSession:
         scenario = ScenarioSkipList(rng)
         nodes = scenario.bulk_load_classes(classes)
         _assign_building_colors(nodes)
+        _assign_representative_animals(nodes, tree)
         missing = all_taxonomic_classes(tree) - scenario.classes_present()
         if missing:
             raise DatabaseError(
@@ -125,7 +127,6 @@ class GameSession:
         nxt = self.scenario.move(self.current_node, self.current_level, lvl)
         if nxt is None:
             return False
-            
         self.current_node = nxt
         self.moves += 1
         self.energy -= 1
@@ -142,14 +143,6 @@ class GameSession:
         if self._at_target_building():
             self._resolve_combat()
             return
-
-        if self.current_node is not self.scenario.head:
-            if self.current_node.animal_class > self.target.taxonomic_class:
-                self.energy = 0
-                self.state = GameState.GAME_OVER
-                self.message = "Você ultrapassou o prédio do alvo! Game Over."
-                return
-
         if self.energy <= 0:
             self.state = GameState.GAME_OVER
             self.message = "Você ficou sem energia antes de alcançar o alvo. Game Over."
@@ -162,15 +155,28 @@ class GameSession:
         return self.current_node.animal_class == self.target.taxonomic_class
 
     def _resolve_combat(self) -> None:
-        """Interrompe a navegação e resolve o combate na moeda 50/50."""
-        won = self._flip_coin()
+        """Interrompe a navegação para iniciar a animação de combate."""
+        self.state = GameState.COMBAT
+        self.message = f"Enfrentando {self.target.common_name if self.target else 'o alvo'}!"
+
+    def resolve_combat(self) -> bool:
+        """Executa uma única resolução 50/50 após a confirmação do jogador."""
+        if self.state != GameState.COMBAT or self.target is None:
+            return False
+        self.finish_combat(self._flip_coin())
+        return True
+
+    def finish_combat(self, won: bool) -> None:
+        """Chamado pela UI após a animação da moeda."""
         if won:
             self.victories += 1
             self.start_new_turn()
-            self.message = "Vitória no combate da moeda (50/50)! Alvo anterior concluído. Novo turno iniciado!"
+
+            self.message = "Vitória no combate da moeda (50/50)! Próximo alvo sorteado."
         else:
             self.state = GameState.GAME_OVER
-            self.message = "Derrota no combate da moeda (50/50). Game Over imediato."
+
+            self.message = "Derrota no combate da moeda (50/50). Game Over."
 
     def restart_turn(self) -> None:
         """Reinicia posição mantendo o mesmo alvo."""
@@ -187,7 +193,7 @@ class GameSession:
     def target_class_label(self) -> str:
         if self.target is None:
             return "—"
-        return f"Alvo: {self.target.common_name} ({self.target.taxonomic_class})"
+        return self.target.taxonomic_class
 
 
 def _assign_building_colors(nodes: list[BuildingNode]) -> None:
@@ -195,3 +201,20 @@ def _assign_building_colors(nodes: list[BuildingNode]) -> None:
         hue = (i * 0.61803398875) % 1.0
         r, g, b = colorsys.hsv_to_rgb(hue, 0.55, 0.85)
         node.color = (int(r * 255), int(g * 255), int(b * 255))
+
+
+def _assign_representative_animals(nodes: list[BuildingNode], tree: SplayTree[AnimalRecord]) -> None:
+    # Agrupa animais por classe para preencher os prédios
+    from collections import defaultdict
+    class_map = defaultdict(list)
+    for animal in tree.values_inorder():
+        class_map[animal.taxonomic_class].append(animal.common_name)
+    
+    for node in nodes:
+        names = class_map.get(node.animal_class, [])
+        # Pega até 'node.level' animais aleatórios (um por andar, se possível)
+        if names:
+            sample_size = min(len(names), node.level)
+            node.representative_animals = random.sample(names, sample_size)
+        else:
+            node.representative_animals = [f"Animal de {node.animal_class}"]

@@ -104,6 +104,11 @@ class GameplayTests(unittest.TestCase):
         s.current_node = target_building
         s._after_move()
 
+        # Chegar ao prédio abre o combate, sem jogar a moeda automaticamente.
+        self.assertEqual(s.state, GameState.COMBAT)
+        self.assertEqual(s.victories, 0)
+        self.assertTrue(s.resolve_combat())
+
         # Vitória!
         # - jogador sobrevive e começa novo turno
         self.assertEqual(s.state, GameState.PLAYING)
@@ -136,6 +141,9 @@ class GameplayTests(unittest.TestCase):
         s.current_node = target_building
         s._after_move()
 
+        self.assertEqual(s.state, GameState.COMBAT)
+        self.assertTrue(s.resolve_combat())
+
         # Derrota:
         # - Game Over imediato
         self.assertEqual(s.state, GameState.GAME_OVER)
@@ -155,7 +163,10 @@ class GameplayTests(unittest.TestCase):
         start_energy = s.energy
         moved = s.try_move_at_level(0)
         self.assertTrue(moved)
-        # Como era 'Aves' (o alvo) e moeda deu True, combate foi acionado e novo turno começou na head
+        # O prédio correto abre o painel de combate até o jogador confirmar.
+        self.assertEqual(s.state, GameState.COMBAT)
+        self.assertEqual(s.victories, 0)
+        s.resolve_combat()
         self.assertEqual(s.victories, 1)
         self.assertEqual(s.state, GameState.PLAYING)
         self.assertIs(s.current_node, s.scenario.head)
@@ -212,6 +223,43 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(s.energy, 0)
         self.assertEqual(s.state, GameState.GAME_OVER)
         self.assertIn("sem energia", s.message.lower())
+
+    def test_restart_during_combat_keeps_target(self) -> None:
+        s = _make_session(["Aves", "Mammalia"], "Aves")
+        target = s.target
+        building = s.scenario.node_for_class(target.taxonomic_class)
+        assert building is not None
+        s.current_node = building
+        s._after_move()
+        self.assertEqual(s.state, GameState.COMBAT)
+
+        s.restart_turn()
+
+        self.assertEqual(s.state, GameState.PLAYING)
+        self.assertIs(s.target, target)
+        self.assertIs(s.current_node, s.scenario.head)
+
+    def test_new_target_leaves_combat_and_selects_another_animal(self) -> None:
+        s = _make_session_multi(
+            [(10, "Arara", "A. sp.", "Aves"), (20, "Onça", "P. onca", "Mammalia")],
+            seed=7,
+        )
+        old_target = s.target
+        s._id_keys = [old_target.id, 20 if old_target.id == 10 else 10]
+
+        class NextChoice:
+            def choice(self, values: list[int]) -> int:
+                return next(value for value in values if value != old_target.id)
+
+        s.rng = NextChoice()
+        target_building = s.scenario.node_for_class(old_target.taxonomic_class)
+        assert target_building is not None
+        s.current_node = target_building
+        s._after_move()
+        s.new_target()
+
+        self.assertEqual(s.state, GameState.PLAYING)
+        self.assertNotEqual(s.target.id, old_target.id)
 
 
 if __name__ == "__main__":

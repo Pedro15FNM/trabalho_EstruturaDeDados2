@@ -270,6 +270,10 @@ class ReviewGameRulesTests(unittest.TestCase):
         s.current_node = target_building
         s._after_move()
 
+        self.assertEqual(s.state, GameState.COMBAT)
+        self.assertEqual(s.victories, 0)
+        s.resolve_combat()
+
         # 12. Vitória: jogador sobrevive
         # 14. Jogador retorna à head e andar 0
         self.assertIs(s.current_node, s.scenario.head)
@@ -299,6 +303,9 @@ class ReviewGameRulesTests(unittest.TestCase):
 
         s.current_node = target_building
         s._after_move()
+
+        self.assertEqual(s.state, GameState.COMBAT)
+        s.resolve_combat()
 
         # 13. Derrota: Game Over imediato, nenhum novo turno, navegação bloqueada
         self.assertEqual(s.state, GameState.GAME_OVER)

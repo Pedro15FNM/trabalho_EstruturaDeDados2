@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Iterable
 
 from animal import AnimalRecord
+from animal_images import extract_inaturalist_id, inaturalist_taxon_url
 from splay_tree import SplayTree
 from tree_persistence import DEFAULT_PICKLE_PATH, load_splay_tree, save_splay_tree
 
@@ -48,6 +49,7 @@ def _file_fingerprint(paths: Iterable[Path]) -> str:
     parts: list[str] = [
         f"max_rows={MAX_VERNACULAR_ROWS}",
         f"shuffle_seed={INSERT_SHUFFLE_SEED}",
+        "animal_schema=2",
     ]
     for path in paths:
         p = str(path.resolve())
@@ -108,7 +110,12 @@ def _load_taxa_for_ids(path: Path, ids: set[int]) -> dict[int, dict[str, str]]:
         class_col = fields.get("class", "class")
         sci_col = fields.get("scientificname", "scientificName")
         kingdom_col = fields.get("kingdom", "kingdom")
+        taxon_id_col = fields.get("taxonid")
+        identifier_col = fields.get("identifier")
+        rank_col = fields.get("taxonrank")
         for row in reader:
+            if None in row:
+                continue
             raw_id = (row.get(id_col) or "").strip()
             if not raw_id:
                 continue
@@ -119,12 +126,22 @@ def _load_taxa_for_ids(path: Path, ids: set[int]) -> dict[int, dict[str, str]]:
             if tid not in remaining:
                 continue
             tax_class = (row.get(class_col) or "").strip()
-            if not tax_class:
+            scientific_name = (row.get(sci_col) or "").strip()
+            kingdom = (row.get(kingdom_col) or "").strip()
+            if not tax_class or not scientific_name or not kingdom:
                 continue
+            inaturalist_id = extract_inaturalist_id(
+                row.get(taxon_id_col) if taxon_id_col else None
+            ) or extract_inaturalist_id(
+                row.get(identifier_col) if identifier_col else None
+            )
             found[tid] = {
-                "scientific_name": (row.get(sci_col) or "").strip(),
+                "scientific_name": scientific_name,
                 "taxonomic_class": tax_class,
-                "kingdom": (row.get(kingdom_col) or "").strip(),
+                "kingdom": kingdom,
+                "inaturalist_id": inaturalist_id or "",
+                "inaturalist_url": inaturalist_taxon_url(inaturalist_id) or "",
+                "taxon_rank": (row.get(rank_col) or "").strip() if rank_col else "",
             }
             remaining.discard(tid)
             if not remaining:
@@ -150,6 +167,8 @@ def build_tree_from_csv(*, shuffle_seed: int | None = INSERT_SHUFFLE_SEED) -> Sp
                 scientific_name=meta["scientific_name"],
                 taxonomic_class=meta["taxonomic_class"],
                 kingdom=meta.get("kingdom", ""),
+                inaturalist_id=meta.get("inaturalist_id") or None,
+                inaturalist_url=meta.get("inaturalist_url") or None,
             )
         except ValueError:
             continue
