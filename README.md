@@ -6,6 +6,9 @@ A base de dados, contendo os animais e suas categorias, é gerenciada por uma Á
 
 No início de cada rodada, um animal é sorteado da Árvore de Afunilamento e suas informações são exibidas. O objetivo do jogador é alcançar o prédio referente à classe desse animal navegando pelas tirolesas (começando pela cabeça da lista), com cuidado para não esgotar a energia de movimentação(tem uma quantidade limitada de movimentos por rodada, se gastar toda a energia perde a rodada), e com cuidado para não ultrapassar o prédio da classse alvo(se ultrapassar perde o jogo). Ao alcançar o objetivo, um novo animal de outra classe é sorteado e o ciclo se repete, iniciando uma nova rodada.
 
+A Árvore de afunilamento fica implementada no arquivo splay_tree.py (Classe SplayTree)
+A Lista de Saltos fica no arquivo skip_list.py (Classes BuildingNode e ScenarioSkipList).
+
 ### Processo de desenvolvimento
 
 O desenvolvimento iniciou com a ideação do jogo logo após a apresentação da proposta do projeto. Em seguida, focamos no polimento da ideia, com debates sobre as características da aplicação, definição do escopo e criação dos primeiros diagramas e documentos de conceito.
