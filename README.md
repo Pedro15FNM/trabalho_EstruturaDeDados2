@@ -8,6 +8,8 @@ No início de cada rodada, um animal é sorteado da Árvore de Afunilamento e su
 
 ------
 
+Link do dataset: https://forum.inaturalist.org/t/download-taxonomy-with-synonyms/38699
+
 A Árvore de afunilamento fica implementada no arquivo splay_tree.py (Classe SplayTree)
 
 A Lista de Saltos fica no arquivo skip_list.py (Classes BuildingNode e ScenarioSkipList)
