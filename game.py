@@ -49,6 +49,8 @@ class GameSession:
     victories: int = 0
     _id_keys: list[int] = field(default_factory=list)
     _coin_flip: Callable[[], bool] | None = None
+    _common_keys: list[int] = field(default_factory=list)
+    _rare_keys: list[int] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.energy is None:
@@ -94,14 +96,37 @@ class GameSession:
         return self.rng.choice([True, False])
 
     def start_new_turn(self) -> None:
+    # 1. Separa os IDs apenas na primeira rodada
         if not self._id_keys:
             self._id_keys = self.tree.keys_inorder()
-        if not self._id_keys:
-            raise DatabaseError("Splay Tree vazia: impossível sortear alvo.")
-        chosen_id = self.rng.choice(self._id_keys)
+            if not self._id_keys:
+                raise DatabaseError("Splay Tree vazia: impossível sortear alvo.")
+                
+            # Define as classes "comuns" que vão dominar o jogo
+            classes_comuns = {"Mammalia", "Aves", "Reptilia", "Amphibia"}
+            
+            for key in self._id_keys:
+                animal = self.tree.find(key)
+                if animal.taxonomic_class in classes_comuns:
+                    self._common_keys.append(key)
+                else:
+                    self._rare_keys.append(key)
+    
+        # 2. Sorteio viciado (80% comum / 20% raro)
+        if self._common_keys and self._rare_keys:
+            if self.rng.random() < 0.80:
+                chosen_id = self.rng.choice(self._common_keys)
+            else:
+                chosen_id = self.rng.choice(self._rare_keys)
+        else:
+            # Fallback de segurança caso todos os animais sejam do mesmo tipo
+            chosen_id = self.rng.choice(self._id_keys)
+    
+        # 3. Busca o alvo (Isso ativa o Splay e joga o nó pra raiz!)
         animal = self.tree.find(chosen_id)
         if animal is None:
             raise DatabaseError(f"ID sorteado ausente na árvore: {chosen_id}")
+            
         self.target = animal
         self.current_node = self.scenario.head
         self.current_level = 0
