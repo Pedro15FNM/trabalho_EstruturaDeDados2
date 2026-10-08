@@ -137,12 +137,21 @@ class GameSession:
     def take_zip_line(self) -> bool:
         return self.try_move_at_level(None)
 
-    def _after_move(self) -> None:
+  def _after_move(self) -> None:
         if self.current_node is None or self.target is None:
             return
+            
         if self._at_target_building():
             self._resolve_combat()
             return
+            
+        if self.current_node is not self.scenario.head:
+            if self.current_node.animal_class > self.target.taxonomic_class:
+                self.energy = 0
+                self.state = GameState.GAME_OVER
+                self.message = "Você ultrapassou o prédio do alvo! Game Over."
+                return
+
         if self.energy <= 0:
             self.state = GameState.GAME_OVER
             self.message = "Você ficou sem energia antes de alcançar o alvo. Game Over."
