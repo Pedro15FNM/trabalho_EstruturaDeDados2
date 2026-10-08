@@ -1,4 +1,26 @@
 """Skip List do cenário: cada nó é um prédio associado a uma classe taxonômica."""
+# =========================================================================
+    # ESTRUTURA: SKIP LIST (CENÁRIO 2D PROBABILÍSTICO)
+    # =========================================================================
+    # Função e Implementação:
+    # A Skip List foi adaptada de um algoritmo de busca O(log n) para servir 
+    # como a topologia física (o mapa/cenário de plataformas) do jogo.
+    # 
+    # Em vez de armazenar milhares de animais individuais, o agrupamento é mais 
+    # restrito: cada nó inserido na Skip List representa uma Classe Taxonômica 
+    # única (ordenada alfabeticamente).
+    #
+    # Anatomia da Estrutura no Jogo:
+    # - Prédios (Nós): Cada nó vira um edifício no mapa.
+    # - Andares (Níveis): O nível probabilístico que o algoritmo sorteia para  
+    #   cada nó determina exatamente a quantidade de andares daquele edifício.
+    # - Tirolesas (Ponteiros Forward): Os arrays de ponteiros que apontam 
+    #   para a frente são renderizados visualmente como as tirolesas.
+    #
+    # Modificação da Busca Clássica:
+    # A pesquisa algorítmica linear nativa da estrutura foi propositalmente 
+    # removida. A travessia de nós é feita de forma 100% manual pelo jogador, 
+    # onde cada ponteiro 'forward' atravessado exige o gasto de 1 ponto de energia.
 
 from __future__ import annotations
 
