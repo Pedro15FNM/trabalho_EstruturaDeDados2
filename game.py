@@ -162,7 +162,7 @@ class GameSession:
     def take_zip_line(self) -> bool:
         return self.try_move_at_level(None)
 
-  def _after_move(self) -> None:
+    def _after_move(self) -> None:
         if self.current_node is None or self.target is None:
             return
             
