@@ -1,4 +1,25 @@
 """Árvore Splay: BST autoajustável indexada por ID numérico do animal."""
+# =========================================================================
+# ESTRUTURA: SPLAY TREE (ÁRVORE DE AFUNILAMENTO)
+# =========================================================================
+# Função e Implementação:
+# Atua como o banco de dados primário do jogo em memória, armazenando os 
+# objetos 'AnimalRecord' utilizando o ID do animal como chave de busca.
+# A sua principal característica matemática é a "Localidade de Referência":
+# sempre que um animal é consultado via 'find()', operações de splay 
+# (rotações Zig, Zig-Zig e Zig-Zag) movem esse nó específico para a raiz.
+#
+# Aplicação Prática (Sistema de Raridade / Cache LRU):
+# Para justificar o uso desta estrutura em vez de um Array ou Tabela Hash O(1),
+# o método 'start_new_turn()' implementa uma mecânica de raridade. 
+# Animais de classes comuns (Aves, Mammalia, Reptilia, Amphibia) são 
+# sorteados 80% das vezes, enquanto os raros compõem os 20% restantes.
+# 
+# Como os animais comuns são requisitados o tempo todo, as rotações da Splay 
+# Tree os mantêm permanentemente aglomerados no topo da estrutura. Isso 
+# transforma a árvore em uma Cache LRU (Least Recently Used) orgânica, 
+# tornando a busca pelos alvos mais frequentes extremamente rápida, com
+# tempo amortizado muito próximo de O(1).
 
 from __future__ import annotations
 
